@@ -13,6 +13,10 @@
   - ESP32-S3-WROOM-1
 */
 
+#define DEBUG_SERIAL false
+// true  = mensajes de texto para Monitor Serial
+// false = solo datos para Serial Plotter
+
 #if defined(ARDUINO_ARCH_ESP32)
   #define BOARD_ESP32
 #endif
@@ -22,7 +26,7 @@
 // =======================
 #if defined(BOARD_ESP32)
 
-  #if CONFIG_IDF_TARGET_ESP32S3
+  #if defined(CONFIG_IDF_TARGET_ESP32S3)
     const int LDR_PIN = 4;       // ESP32-S3-WROOM-1
     const int LED_PIN = 2;
   #else
@@ -44,8 +48,13 @@
 // Variables generales
 // =======================
 int modoGrafica = 1;
+
 const int muestras = 20;
 const unsigned long Ts_ms = 50;
+
+// Escala fija para Serial Plotter
+const float ESCALA_MIN = 0.0;
+const float ESCALA_MAX = 1.0;
 
 // =======================
 // Kalman discreto 1D
@@ -53,8 +62,8 @@ const unsigned long Ts_ms = 50;
 float x_est = 0.0;
 float P = 1.0;
 
-float Q = 0.00005;   // Ruido del proceso
-float R = 0.00200;   // Ruido de medición
+float Q = 0.00005;
+float R = 0.00200;
 
 bool kalmanIniciado = false;
 
@@ -62,6 +71,7 @@ bool kalmanIniciado = false;
 // Promedio móvil
 // =======================
 float bufferPromedio[muestras];
+
 int indicePromedio = 0;
 bool bufferLleno = false;
 
@@ -69,7 +79,9 @@ bool bufferLleno = false;
 // Funciones
 // =======================
 float leerLDR() {
+
   int adc = analogRead(LDR_PIN);
+
   float valor = adc / ADC_MAX;
 
   if (valor < 0.0) valor = 0.0;
@@ -78,7 +90,11 @@ float leerLDR() {
   return valor;
 }
 
+// =======================
+// Filtro Kalman
+// =======================
 float filtroKalman(float z) {
+
   if (!kalmanIniciado) {
     x_est = z;
     P = 1.0;
@@ -95,13 +111,19 @@ float filtroKalman(float z) {
 
   // Corrección
   x_est = x_pred + K * (z - x_pred);
+
   P = (1.0 - K) * P_pred;
 
   return x_est;
 }
 
+// =======================
+// Promedio móvil
+// =======================
 float promedioMovil(float nuevaMuestra) {
+
   bufferPromedio[indicePromedio] = nuevaMuestra;
+
   indicePromedio++;
 
   if (indicePromedio >= muestras) {
@@ -120,63 +142,121 @@ float promedioMovil(float nuevaMuestra) {
   return suma / limite;
 }
 
+// =======================
+// Procesar comandos serial
+// =======================
 void procesarComandoSerial() {
+
   if (Serial.available()) {
+
     char comando = Serial.read();
 
     if (comando == '1') {
+
       modoGrafica = 1;
-      Serial.println("Original");
+
+      if (DEBUG_SERIAL) {
+        Serial.println("Modo: Original");
+      }
     }
 
     else if (comando == '2') {
+
       modoGrafica = 2;
-      Serial.println("Kalman");
+
+      if (DEBUG_SERIAL) {
+        Serial.println("Modo: Kalman");
+      }
     }
 
     else if (comando == '3') {
+
       modoGrafica = 3;
-      Serial.println("Original Kalman");
+
+      if (DEBUG_SERIAL) {
+        Serial.println("Modo: Original + Kalman");
+      }
     }
 
     else if (comando == '4') {
+
       modoGrafica = 4;
-      Serial.println("Original Kalman Promedio");
+
+      if (DEBUG_SERIAL) {
+        Serial.println("Modo: Original + Kalman + Promedio");
+      }
     }
 
+    // limpiar buffer serial
     while (Serial.available()) {
-      Serial.read();   // limpia \n o \r
+      Serial.read();
     }
   }
 }
 
-void imprimirGrafica(float original, float kalman, float promedio) {
+// =======================
+// Imprimir gráfica
+// =======================
+void imprimirGrafica(
+  float original,
+  float kalman,
+  float promedio
+) {
+
+  // Fuerza escala fija en Serial Plotter
+  Serial.print("Min:");
+  Serial.print(ESCALA_MIN, 2);
+  Serial.print("\t");
+
+  Serial.print("Max:");
+  Serial.print(ESCALA_MAX, 2);
+  Serial.print("\t");
+
+  // ===================
+  // Modo 1
+  // ===================
   if (modoGrafica == 1) {
+
     Serial.print("Original:");
     Serial.println(original, 6);
   }
 
+  // ===================
+  // Modo 2
+  // ===================
   else if (modoGrafica == 2) {
+
     Serial.print("Kalman:");
     Serial.println(kalman, 6);
   }
 
+  // ===================
+  // Modo 3
+  // ===================
   else if (modoGrafica == 3) {
+
     Serial.print("Original:");
     Serial.print(original, 6);
+
     Serial.print("\t");
 
     Serial.print("Kalman:");
     Serial.println(kalman, 6);
   }
 
+  // ===================
+  // Modo 4
+  // ===================
   else if (modoGrafica == 4) {
+
     Serial.print("Original:");
     Serial.print(original, 6);
+
     Serial.print("\t");
 
     Serial.print("Kalman:");
     Serial.print(kalman, 6);
+
     Serial.print("\t");
 
     Serial.print("Promedio:");
@@ -188,7 +268,9 @@ void imprimirGrafica(float original, float kalman, float promedio) {
 // Setup
 // =======================
 void setup() {
+
   Serial.begin(115200);
+
   delay(1000);
 
 #if defined(BOARD_ESP32)
@@ -196,31 +278,52 @@ void setup() {
 #endif
 
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);   // LED blanco siempre encendido
 
+  // LED blanco encendido
+  digitalWrite(LED_PIN, HIGH);
+
+  // Inicializar buffer
   for (int i = 0; i < muestras; i++) {
     bufferPromedio[i] = 0.0;
   }
 
-  Serial.println("Colorimetro LDR con LED blanco, filtros manuales y Kalman");
-  Serial.println("Comandos:");
-  Serial.println("1 = Original");
-  Serial.println("2 = Kalman");
-  Serial.println("3 = Original + Kalman");
-  Serial.println("4 = Original + Kalman + Promedio");
+  // Mensajes solo si DEBUG_SERIAL = true
+  if (DEBUG_SERIAL) {
+
+    Serial.println();
+    Serial.println("================================");
+    Serial.println("Colorimetro didactico LDR");
+    Serial.println("================================");
+
+    Serial.println("Comandos:");
+
+    Serial.println("1 = Original");
+    Serial.println("2 = Kalman");
+    Serial.println("3 = Original + Kalman");
+    Serial.println("4 = Original + Kalman + Promedio");
+
+    Serial.println();
+  }
 }
 
 // =======================
 // Loop
 // =======================
 void loop() {
+
   procesarComandoSerial();
 
   float original = leerLDR();
+
   float kalman = filtroKalman(original);
+
   float promedio = promedioMovil(original);
 
-  imprimirGrafica(original, kalman, promedio);
+  imprimirGrafica(
+    original,
+    kalman,
+    promedio
+  );
 
   delay(Ts_ms);
 }
